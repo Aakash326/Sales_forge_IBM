@@ -10,31 +10,36 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
 from src.workflow.states.lead_states import LeadState
 
-# Handle optional autogen import
+# Handle optional autogen-agentchat import
 try:
-    from autogen import ConversableAgent, GroupChat, GroupChatManager
-    HAS_AUTOGEN = True
+    from autogen_agentchat.agents import AssistantAgent
+    from autogen_agentchat.teams import RoundRobinGroupChat
+    from autogen_ext.models.openai import OpenAIChatCompletionClient
+    HAS_AGENTCHAT = True
 except ImportError:
-    HAS_AUTOGEN = False
-    ConversableAgent = None
-    GroupChat = None
-    GroupChatManager = None
+    HAS_AGENTCHAT = False
+    AssistantAgent = None
+    RoundRobinGroupChat = None
+    OpenAIChatCompletionClient = None
 
 class SimulationNode:
-    """Node that coordinates sales simulations using AutoGen"""
+    """Node that coordinates sales simulations using AgentChat API"""
     
     def __init__(self):
-        self.llm_config = {
-            "config_list": [{"model": "gpt-5-mini", "api_key": "your-api-key"}],
-            "temperature": 1.0
-        }
+        # Initialize model client for autogen-agentchat
+        self.model_client = None
+        if HAS_AGENTCHAT:
+            self.model_client = OpenAIChatCompletionClient(
+                model="gpt-4o-mini",
+                # api_key will be read from environment variable
+            )
         
     def execute(self, state: LeadState) -> LeadState:
         """Execute sales simulation for the lead"""
         
-        if not HAS_AUTOGEN:
-            # Fallback simulation when autogen is not available
-            print(f"AutoGen not available, using fallback simulation for {state.company_name}")
+        if not HAS_AGENTCHAT:
+            # Fallback simulation when agentchat is not available
+            print(f"AgentChat not available, using fallback simulation for {state.company_name}")
             state.simulation_completed = True
             state.predicted_conversion = self._calculate_fallback_conversion(state)
             state.recommended_approach = self._get_fallback_approach(state)
@@ -42,7 +47,7 @@ class SimulationNode:
             state.metadata["simulation_results"] = {
                 "simulation_id": str(uuid.uuid4()),
                 "conversation_summary": f"Fallback simulation for {state.company_name}",
-                "key_insights": ["Simulation completed without AutoGen"],
+                "key_insights": ["Simulation completed without AgentChat"],
                 "objections_identified": ["Budget concerns", "Implementation timeline"],
                 "success_factors": ["Company fit", "Pain point alignment"],
                 "risk_factors": ["Competition", "Decision timeline"]
@@ -51,7 +56,7 @@ class SimulationNode:
         
         try:
             # Run the simulation
-            simulation_results = self._run_sales_simulation(state)
+            simulation_results = asyncio.run(self._run_sales_simulation(state))
             
             # Update state with simulation results
             state.simulation_completed = True
@@ -103,11 +108,11 @@ class SimulationNode:
         else:
             return "Standard discovery call approach"
     
-    def _run_sales_simulation(self, state: LeadState) -> Dict[str, Any]:
+    async def _run_sales_simulation(self, state: LeadState) -> Dict[str, Any]:
         """Run AutoGen simulation of sales conversation"""
         
-        if not HAS_AUTOGEN:
-            # This should not be called if AutoGen is not available
+        if not HAS_AGENTCHAT:
+            # This should not be called if AgentChat is not available
             return {
                 "conversion_probability": self._calculate_fallback_conversion(state),
                 "recommended_approach": self._get_fallback_approach(state),
@@ -119,26 +124,23 @@ class SimulationNode:
             }
         
         # Create prospect persona agent
-        prospect_agent = ConversableAgent(
+        prospect_agent = AssistantAgent(
             name=f"prospect_{state.company_name.replace(' ', '_')}",
-            system_message=self._create_prospect_persona(state),
-            llm_config=self.llm_config,
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=3
+            model_client=self.model_client,
+            system_message=self._create_prospect_persona(state)
         )
         
         # Create sales rep agent  
-        sales_agent = ConversableAgent(
+        sales_agent = AssistantAgent(
             name="sales_rep",
-            system_message=self._create_sales_rep_persona(state),
-            llm_config=self.llm_config,
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=3
+            model_client=self.model_client,
+            system_message=self._create_sales_rep_persona(state)
         )
         
         # Create sales manager observer
-        sales_manager = ConversableAgent(
+        sales_manager = AssistantAgent(
             name="sales_manager",
+            model_client=self.model_client,
             system_message="""
             You are an experienced sales manager observing this conversation.
             After the conversation, provide:
@@ -150,23 +152,13 @@ class SimulationNode:
             6. Risk factors to watch
             
             Be analytical and provide actionable feedback.
-            """,
-            llm_config=self.llm_config,
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=1
+            """
         )
         
-        # Create group chat
-        group_chat = GroupChat(
-            agents=[sales_agent, prospect_agent, sales_manager],
-            messages=[],
-            max_round=8,
-            speaker_selection_method="round_robin"
-        )
-        
-        manager = GroupChatManager(
-            groupchat=group_chat,
-            llm_config=self.llm_config
+        # Create group chat team
+        team = RoundRobinGroupChat(
+            participants=[sales_agent, prospect_agent, sales_manager],
+            max_turns=8
         )
         
         # Start the simulation
@@ -180,12 +172,8 @@ class SimulationNode:
         Begin the simulation now.
         """
         
-        # Run the conversation
-        chat_result = sales_agent.initiate_chat(
-            manager,
-            message=initial_message,
-            max_turns=4
-        )
+        # Start the conversation
+        chat_result = await team.run(task=initial_message)
         
         # Parse the simulation results
         return self._parse_simulation_results(chat_result, state)
@@ -279,10 +267,12 @@ class SimulationNode:
     def _parse_simulation_results(self, chat_result, state: LeadState) -> Dict[str, Any]:
         """Parse the AutoGen simulation results"""
         
-        # Extract conversation messages
+        # Extract conversation messages from autogen-agentchat result
         conversation_messages = []
-        if hasattr(chat_result, 'chat_history'):
-            conversation_messages = chat_result.chat_history
+        if hasattr(chat_result, 'messages'):
+            conversation_messages = chat_result.messages
+        elif hasattr(chat_result, 'task_result') and hasattr(chat_result.task_result, 'messages'):
+            conversation_messages = chat_result.task_result.messages
         
         # Default results structure
         results = {
@@ -296,7 +286,10 @@ class SimulationNode:
         }
         
         # Analyze conversation for insights
-        full_conversation = " ".join([msg.get("content", "") for msg in conversation_messages])
+        full_conversation = " ".join([
+            msg.content if hasattr(msg, 'content') else msg.get("content", "")
+            for msg in conversation_messages
+        ])
         
         # Simple keyword-based analysis (could be enhanced with more sophisticated NLP)
         if "interested" in full_conversation.lower():
