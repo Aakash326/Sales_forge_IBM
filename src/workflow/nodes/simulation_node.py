@@ -1,0 +1,342 @@
+from typing import Dict, Any, List
+import json
+import asyncio
+import uuid
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
+
+from src.workflow.states.lead_states import LeadState
+
+# Handle optional autogen import
+try:
+    from autogen import ConversableAgent, GroupChat, GroupChatManager
+    HAS_AUTOGEN = True
+except ImportError:
+    HAS_AUTOGEN = False
+    ConversableAgent = None
+    GroupChat = None
+    GroupChatManager = None
+
+class SimulationNode:
+    """Node that coordinates sales simulations using AutoGen"""
+    
+    def __init__(self):
+        self.llm_config = {
+            "config_list": [{"model": "gpt-5-mini", "api_key": "your-api-key"}],
+            "temperature": 1.0
+        }
+        
+    def execute(self, state: LeadState) -> LeadState:
+        """Execute sales simulation for the lead"""
+        
+        if not HAS_AUTOGEN:
+            # Fallback simulation when autogen is not available
+            print(f"AutoGen not available, using fallback simulation for {state.company_name}")
+            state.simulation_completed = True
+            state.predicted_conversion = self._calculate_fallback_conversion(state)
+            state.recommended_approach = self._get_fallback_approach(state)
+            
+            state.metadata["simulation_results"] = {
+                "simulation_id": str(uuid.uuid4()),
+                "conversation_summary": f"Fallback simulation for {state.company_name}",
+                "key_insights": ["Simulation completed without AutoGen"],
+                "objections_identified": ["Budget concerns", "Implementation timeline"],
+                "success_factors": ["Company fit", "Pain point alignment"],
+                "risk_factors": ["Competition", "Decision timeline"]
+            }
+            return state
+        
+        try:
+            # Run the simulation
+            simulation_results = self._run_sales_simulation(state)
+            
+            # Update state with simulation results
+            state.simulation_completed = True
+            state.predicted_conversion = simulation_results.get("conversion_probability", 0.0)
+            state.recommended_approach = simulation_results.get("recommended_approach", "")
+            
+            # Store full simulation results
+            state.metadata["simulation_results"] = {
+                "simulation_id": str(uuid.uuid4()),
+                "conversation_summary": simulation_results.get("conversation_summary", ""),
+                "key_insights": simulation_results.get("insights", []),
+                "objections_identified": simulation_results.get("objections", []),
+                "success_factors": simulation_results.get("success_factors", []),
+                "risk_factors": simulation_results.get("risk_factors", [])
+            }
+            
+        except Exception as e:
+            print(f"Simulation failed for {state.company_name}: {str(e)}")
+            state.metadata["simulation_error"] = str(e)
+            
+            # Provide fallback recommendation
+            state.recommended_approach = "Standard discovery call approach"
+            state.predicted_conversion = 0.3  # Default conservative estimate
+        
+        return state
+    
+    def _calculate_fallback_conversion(self, state: LeadState) -> float:
+        """Calculate fallback conversion probability without AutoGen"""
+        base_score = 0.3
+        
+        # Adjust based on available data
+        if state.company_size and state.company_size > 500:
+            base_score += 0.2
+        if state.engagement_level > 0.6:
+            base_score += 0.2
+        if state.pain_points and len(state.pain_points) > 0:
+            base_score += 0.1
+        if state.research_completed:
+            base_score += 0.1
+            
+        return min(base_score, 1.0)
+    
+    def _get_fallback_approach(self, state: LeadState) -> str:
+        """Get fallback approach recommendation"""
+        if state.company_size and state.company_size > 1000:
+            return "Enterprise discovery call with technical demo"
+        elif state.engagement_level > 0.7:
+            return "Schedule product demonstration"
+        else:
+            return "Standard discovery call approach"
+    
+    def _run_sales_simulation(self, state: LeadState) -> Dict[str, Any]:
+        """Run AutoGen simulation of sales conversation"""
+        
+        if not HAS_AUTOGEN:
+            # This should not be called if AutoGen is not available
+            return {
+                "conversion_probability": self._calculate_fallback_conversion(state),
+                "recommended_approach": self._get_fallback_approach(state),
+                "conversation_summary": "Fallback simulation",
+                "insights": [],
+                "objections": [],
+                "success_factors": [],
+                "risk_factors": []
+            }
+        
+        # Create prospect persona agent
+        prospect_agent = ConversableAgent(
+            name=f"prospect_{state.company_name.replace(' ', '_')}",
+            system_message=self._create_prospect_persona(state),
+            llm_config=self.llm_config,
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=3
+        )
+        
+        # Create sales rep agent  
+        sales_agent = ConversableAgent(
+            name="sales_rep",
+            system_message=self._create_sales_rep_persona(state),
+            llm_config=self.llm_config,
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=3
+        )
+        
+        # Create sales manager observer
+        sales_manager = ConversableAgent(
+            name="sales_manager",
+            system_message="""
+            You are an experienced sales manager observing this conversation.
+            After the conversation, provide:
+            1. Conversion probability (0-1)
+            2. Key insights about the prospect
+            3. Recommended approach going forward
+            4. Objections that were raised
+            5. Success factors identified
+            6. Risk factors to watch
+            
+            Be analytical and provide actionable feedback.
+            """,
+            llm_config=self.llm_config,
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=1
+        )
+        
+        # Create group chat
+        group_chat = GroupChat(
+            agents=[sales_agent, prospect_agent, sales_manager],
+            messages=[],
+            max_round=8,
+            speaker_selection_method="round_robin"
+        )
+        
+        manager = GroupChatManager(
+            groupchat=group_chat,
+            llm_config=self.llm_config
+        )
+        
+        # Start the simulation
+        initial_message = f"""
+        Let's simulate a discovery call between our sales rep and the prospect from {state.company_name}.
+        
+        Sales rep: Start with an introduction and discovery questions.
+        Prospect: Respond as the contact from {state.company_name} would.
+        Sales manager: Observe and provide analysis at the end.
+        
+        Begin the simulation now.
+        """
+        
+        # Run the conversation
+        chat_result = sales_agent.initiate_chat(
+            manager,
+            message=initial_message,
+            max_turns=4
+        )
+        
+        # Parse the simulation results
+        return self._parse_simulation_results(chat_result, state)
+    
+    def _create_prospect_persona(self, state: LeadState) -> str:
+        """Create a realistic prospect persona for simulation"""
+        
+        persona = f"""
+        You are {state.contact_name or 'the decision maker'} at {state.company_name}.
+        
+        Company Details:
+        - Company: {state.company_name}
+        - Industry: {state.industry or 'Technology'}
+        - Size: {state.company_size or 100} employees
+        - Your role: Decision maker for technology purchases
+        
+        Current Situation:
+        """
+        
+        if state.pain_points:
+            persona += f"- Current challenges: {', '.join(state.pain_points)}\n"
+        else:
+            persona += "- Generally satisfied with current solutions but open to improvements\n"
+            
+        if state.tech_stack:
+            persona += f"- Current technology: {', '.join(state.tech_stack)}\n"
+        else:
+            persona += "- Using standard industry technology stack\n"
+        
+        persona += f"""
+        Personality:
+        - Busy executive with limited time
+        - Skeptical of sales pitches but interested in genuine solutions
+        - Wants to understand ROI and business impact
+        - Asks tough questions about implementation and support
+        - Budget-conscious but willing to invest in proven solutions
+        
+        Conversation Style:
+        - Professional but direct
+        - Asks specific questions about features, pricing, and implementation
+        - Shares relevant challenges when the solution seems promising
+        - Raises realistic objections based on past experiences
+        - Wants concrete examples and case studies
+        
+        Respond naturally as this person would in a real sales conversation.
+        Be realistic in your responses - not too easy or too difficult.
+        """
+        
+        return persona
+    
+    def _create_sales_rep_persona(self, state: LeadState) -> str:
+        """Create an effective sales rep persona for simulation"""
+        
+        return f"""
+        You are an experienced B2B sales representative having a discovery call with a prospect from {state.company_name}.
+        
+        Your Preparation:
+        - You've researched {state.company_name} and know they are in {state.industry or 'the technology'} industry
+        - Company size: {state.company_size or 'Unknown'} employees
+        - You understand their potential pain points: {', '.join(state.pain_points) if state.pain_points else 'Standard industry challenges'}
+        - Previous outreach attempts: {state.outreach_attempts}
+        
+        Your Selling Style:
+        - Consultative approach focused on understanding needs
+        - Ask thoughtful discovery questions
+        - Listen actively and acknowledge pain points
+        - Present relevant solutions based on what you learn
+        - Use social proof and case studies when appropriate
+        - Handle objections professionally
+        - Always look for next steps
+        
+        Your Goals:
+        1. Understand their current situation and challenges
+        2. Identify if there's a good fit for your solution
+        3. Build rapport and trust
+        4. Present value proposition if there's alignment
+        5. Secure next steps (demo, proposal, etc.)
+        
+        Conversation Flow:
+        - Introduction and agenda setting
+        - Discovery questions about current state
+        - Understanding pain points and goals
+        - Presenting relevant capabilities
+        - Handling questions/objections
+        - Next steps discussion
+        
+        Be professional, helpful, and focus on the prospect's needs.
+        Don't be pushy - focus on qualifying and providing value.
+        """
+    
+    def _parse_simulation_results(self, chat_result, state: LeadState) -> Dict[str, Any]:
+        """Parse the AutoGen simulation results"""
+        
+        # Extract conversation messages
+        conversation_messages = []
+        if hasattr(chat_result, 'chat_history'):
+            conversation_messages = chat_result.chat_history
+        
+        # Default results structure
+        results = {
+            "conversion_probability": 0.3,
+            "recommended_approach": "Standard discovery approach",
+            "conversation_summary": "Simulation completed",
+            "insights": [],
+            "objections": [],
+            "success_factors": [],
+            "risk_factors": []
+        }
+        
+        # Analyze conversation for insights
+        full_conversation = " ".join([msg.get("content", "") for msg in conversation_messages])
+        
+        # Simple keyword-based analysis (could be enhanced with more sophisticated NLP)
+        if "interested" in full_conversation.lower():
+            results["conversion_probability"] += 0.2
+        if "budget" in full_conversation.lower():
+            results["conversion_probability"] += 0.1
+        if "not interested" in full_conversation.lower():
+            results["conversion_probability"] -= 0.2
+        if "already have" in full_conversation.lower():
+            results["conversion_probability"] -= 0.1
+            
+        # Ensure probability is between 0 and 1
+        results["conversion_probability"] = max(0.0, min(1.0, results["conversion_probability"]))
+        
+        # Extract insights based on conversation content
+        if "price" in full_conversation.lower() or "cost" in full_conversation.lower():
+            results["objections"].append("Price sensitivity")
+            results["recommended_approach"] = "Focus on ROI and value demonstration"
+            
+        if "implementation" in full_conversation.lower():
+            results["risk_factors"].append("Implementation complexity concerns")
+            
+        if "demo" in full_conversation.lower():
+            results["success_factors"].append("Interest in product demonstration")
+            results["recommended_approach"] = "Schedule technical demo"
+            
+        # Generate conversation summary
+        results["conversation_summary"] = f"Simulated discovery call with {state.company_name}. "
+        if results["conversion_probability"] > 0.6:
+            results["conversation_summary"] += "High interest level identified."
+        elif results["conversion_probability"] > 0.4:
+            results["conversation_summary"] += "Moderate interest with some concerns."
+        else:
+            results["conversation_summary"] += "Low initial interest, needs nurturing."
+            
+        # Add simulation insights
+        results["insights"] = [
+            f"Predicted conversion probability: {results['conversion_probability']:.1%}",
+            f"Recommended next step: {results['recommended_approach']}",
+            "Simulation identified key conversation patterns"
+        ]
+        
+        return results
