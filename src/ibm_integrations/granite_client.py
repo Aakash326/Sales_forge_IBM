@@ -4,6 +4,13 @@ import logging
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # IBM watsonx imports
 try:
     from ibm_watsonx_ai.foundation_models import Model
@@ -97,18 +104,53 @@ class GraniteClient:
         
         try:
             credentials = Credentials(url=url, api_key=api_key)
-            self.model = Model(
-                model_id=f"ibm/{self.model_name}",
-                credentials=credentials,
-                project_id=project_id,
-                params={
-                    GenParams.MAX_NEW_TOKENS: 1024,
-                    GenParams.TEMPERATURE: 0.7
-                }
-            )
-            self.logger.info(f"Initialized watsonx: {self.model_name}")
+            
+            # Try newer ModelInference first
+            try:
+                from ibm_watsonx_ai.foundation_models import ModelInference
+                self.model = ModelInference(
+                    model_id=f"ibm/{self.model_name}",
+                    credentials=credentials,
+                    project_id=project_id,
+                    params={
+                        "max_new_tokens": 1024,
+                        "temperature": 0.7
+                    }
+                )
+                self.logger.info(f"Initialized watsonx with ModelInference: {self.model_name}")
+            except ImportError:
+                # Fall back to deprecated Model class
+                self.model = Model(
+                    model_id=f"ibm/{self.model_name}",
+                    credentials=credentials,
+                    project_id=project_id,
+                    params={
+                        GenParams.MAX_NEW_TOKENS: 1024,
+                        GenParams.TEMPERATURE: 0.7
+                    }
+                )
+                self.logger.info(f"Initialized watsonx with Model: {self.model_name}")
+                
         except Exception as e:
+            error_msg = str(e)
             self.logger.error(f"watsonx init failed: {e}")
+            
+            # Provide specific guidance based on error type
+            if "404" in error_msg and "user profile" in error_msg.lower():
+                self.logger.warning("User profile not found - account may need verification")
+                self.logger.warning("1. Check if IBM Cloud account email is verified")
+                self.logger.warning("2. Ensure watsonx.ai service is enabled in your account")
+                self.logger.warning("3. Try logging into https://dataplatform.cloud.ibm.com/")
+            elif "401" in error_msg or "unauthorized" in error_msg.lower():
+                self.logger.warning("Authentication failed - check credentials")
+                self.logger.warning("1. Verify API key is correct and not expired")
+                self.logger.warning("2. Ensure project ID is correct")
+                self.logger.warning("3. Check if you have project access permissions")
+            elif "403" in error_msg or "forbidden" in error_msg.lower():
+                self.logger.warning("Permission denied - check account access")
+                self.logger.warning("1. Verify watsonx.ai service is provisioned")
+                self.logger.warning("2. Check if trial/free tier limits exceeded")
+            
             self._init_fallback()
     
     def _init_huggingface(self):
