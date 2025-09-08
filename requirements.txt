@@ -16,3 +16,9 @@ crewai
 autogen-agentchat>=0.4.0
 autogen-ext[openai]>=0.4.0
 numpy>=1.24.0
+ibm-watsonx-ai>=1.2.0
+transformers>=4.36.0
+torch>=2.0.0
+accelerate>=0.25.0
+requests>=2.31.0
+pyyaml>=6.0.0
