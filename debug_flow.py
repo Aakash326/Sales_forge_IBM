@@ -75,6 +75,6 @@ def debug_pipeline_flow():
     print("- LangGraph orchestrates silently in the background")
     print("- CrewAI agents do the 'thinking' and show verbose progress")
     print("- It's like a conductor (LangGraph) directing musicians (CrewAI)")
-
+    print("- You get detailed insights from CrewAI while LangGraph manages the process")
 if __name__ == "__main__":
     debug_pipeline_flow()
