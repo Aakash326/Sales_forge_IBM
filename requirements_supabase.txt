@@ -1,0 +1,28 @@
+# Supabase Integration Requirements
+# Install with: pip install -r requirements_supabase.txt
+
+# Core Supabase dependencies
+supabase==2.3.4
+postgrest==0.16.0
+gotrue==2.4.2
+
+# Environment and configuration
+python-dotenv==1.0.0
+
+# Standard library dependencies (usually included but listed for completeness)
+typing-extensions>=4.5.0
+
+# Optional: Enhanced logging and monitoring
+structlog>=23.1.0
+
+# Optional: Data validation and serialization  
+pydantic>=2.0.0
+
+# Optional: Async support
+httpx>=0.24.0
+aiofiles>=23.1.0
+
+# Testing dependencies (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0

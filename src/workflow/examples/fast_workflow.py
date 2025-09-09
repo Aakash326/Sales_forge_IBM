@@ -205,17 +205,25 @@ class FastSalesPipeline(SalesPipeline):
             llm = ChatOpenAI(model="gpt-5-mini", temperature=1.0)
             
             prompt = ChatPromptTemplate.from_template("""
-            Create a brief outreach strategy for {contact_name} at {company_name}:
+            Create personalized outreach messages for {contact_name} at {company_name}:
             
             Company: {company_size} employees, {industry}
             Pain Points: {pain_points}
             
-            Provide:
-            1. One email subject line
-            2. One LinkedIn connection message
-            3. Recommended approach
+            Generate as JSON:
+            {{
+                "email": {{
+                    "subject": "Brief, compelling subject line",
+                    "body": "Professional email body (2-3 paragraphs, 150 words max)"
+                }},
+                "linkedin": {{
+                    "connection_message": "Brief LinkedIn connection request (under 200 chars)",
+                    "follow_up_message": "Follow-up LinkedIn message after connection"
+                }},
+                "strategy": "Overall approach and timing recommendations"
+            }}
             
-            Keep it concise and professional.
+            Make messages personal, value-focused, and specific to their pain points.
             """)
             
             chain = prompt | llm
@@ -227,14 +235,31 @@ class FastSalesPipeline(SalesPipeline):
                 "pain_points": ", ".join(state.pain_points[:2]) if state.pain_points else "scaling challenges"
             })
             
+            # Parse the structured outreach response
+            import json
+            try:
+                outreach_data = json.loads(response.content)
+                
+                # Store detailed outreach messages
+                state.metadata["email_subject"] = outreach_data.get("email", {}).get("subject", "")
+                state.metadata["email_body"] = outreach_data.get("email", {}).get("body", "")
+                state.metadata["linkedin_connection"] = outreach_data.get("linkedin", {}).get("connection_message", "")
+                state.metadata["linkedin_follow_up"] = outreach_data.get("linkedin", {}).get("follow_up_message", "")
+                state.metadata["outreach_strategy"] = outreach_data.get("strategy", "")
+                
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                state.metadata["outreach_strategy"] = response.content[:500]
+                state.metadata["email_subject"] = "Strategic Partnership Opportunity"
+                state.metadata["email_body"] = "Fallback email content generated"
+                state.metadata["linkedin_connection"] = "I'd like to connect and discuss potential synergies"
+                state.metadata["linkedin_follow_up"] = "Thanks for connecting! I'd love to explore how we can help your team"
+            
             # Update outreach metrics
             state.outreach_attempts = 1
             state.engagement_level = 0.4  # Initial engagement
             state.response_rate = 0.25  # Expected response rate
             state.last_contact = datetime.now()
-            
-            # Store outreach content in metadata
-            state.metadata["outreach_strategy"] = response.content[:500]
             
         except Exception as e:
             print(f"⚠️  AI outreach failed, using fallback: {str(e)[:50]}...")
@@ -343,11 +368,28 @@ class FastSalesPipeline(SalesPipeline):
     def _fallback_outreach(self, state):
         """Fallback outreach without AI"""
         print("📧 Using fallback outreach logic")
+        
+        company_name = state.company_name or "Your Company"
+        contact_name = state.contact_name or "there"
+        
+        # Generate fallback email and LinkedIn messages
+        state.metadata["email_subject"] = f"Strategic Partnership Opportunity with {company_name}"
+        state.metadata["email_body"] = f"""Hi {contact_name},
+
+I noticed {company_name} is growing rapidly in the {state.industry or 'technology'} space. We've been helping similar companies tackle {state.pain_points[0] if state.pain_points else 'scaling challenges'}.
+
+Would you be open to a brief conversation about how we might support your team's objectives? I'd be happy to share some insights from similar engagements.
+
+Best regards"""
+        
+        state.metadata["linkedin_connection"] = f"Hi {contact_name}, I'd love to connect and discuss potential synergies between our companies."
+        state.metadata["linkedin_follow_up"] = f"Thanks for connecting! I'd love to explore how we can help {company_name} with your growth objectives."
+        state.metadata["outreach_strategy"] = "Multi-channel approach with personalized messaging focusing on growth and efficiency"
+        
         state.outreach_attempts = 1
         state.engagement_level = 0.35
         state.response_rate = 0.25
         state.last_contact = datetime.now()
-        state.metadata["outreach_strategy"] = "Multi-channel approach with personalized messaging"
         return state
     
     def _fallback_simulation(self, state):
@@ -412,6 +454,25 @@ class FastSalesPipeline(SalesPipeline):
         print(f"   • Conversion Probability: {state.predicted_conversion:.1%}")
         print(f"   • Recommended Approach: {state.recommended_approach}")
         print(f"   • Response Rate Estimate: {state.response_rate:.1%}")
+        
+        # Display generated outreach messages
+        print(f"\n📧 Generated Outreach Messages:")
+        email_subject = state.metadata.get('email_subject', 'Not generated')
+        linkedin_msg = state.metadata.get('linkedin_connection', 'Not generated')
+        print(f"   • Email Subject: {email_subject}")
+        print(f"   • LinkedIn Connection: {linkedin_msg[:80]}{'...' if len(linkedin_msg) > 80 else ''}")
+        
+        # Display full email body
+        email_body = state.metadata.get('email_body', 'No email body generated')
+        if email_body and email_body != 'No email body generated':
+            print(f"\n📝 Email Body:")
+            print(f"{email_body}")
+        
+        # Display LinkedIn follow-up
+        linkedin_followup = state.metadata.get('linkedin_follow_up', 'No follow-up message generated')
+        if linkedin_followup and linkedin_followup != 'No follow-up message generated':
+            print(f"\n💼 LinkedIn Follow-up:")
+            print(f"{linkedin_followup}")
         
         if state.assigned_rep:
             print(f"\n👤 Sales Assignment:")

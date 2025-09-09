@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+
+client_secret_886145972382-l47dve8annirf4f73skq5quma7k203qs.apps.googleusercontent.com.json
+.env.example
+client_secret.json
 # Distribution / packaging
 .Python
 build/
@@ -214,6 +218,31 @@ data/
 models/
 
 # Checkpoints and state files
+checkpoints/
+*.checkpoint
+*.ckpt
+*_checkpoints.db
+
+# Add any additional sensitive or generated files to ignore
+# Sensitive files
+.env.production
+.env.local
+
+# Generated files
+logs/
+*.csv
+*.json
+
+# IDE-specific files
+.idea/
+.vscode/
+
+# Data files
+data/
+*.csv
+*.json
+
+# Checkpoints
 checkpoints/
 *.checkpoint
 *.ckpt
