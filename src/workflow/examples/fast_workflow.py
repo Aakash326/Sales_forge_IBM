@@ -22,6 +22,7 @@ load_dotenv(os.path.join(project_root, '.env'))
 sys.path.insert(0, project_root)
 
 from src.workflow.sales_pipeline import SalesPipeline
+from src.agents.industry_router import IndustryRouter
 
 class FastSalesPipeline(SalesPipeline):
     """Fast version of sales pipeline with optimized execution"""
@@ -30,6 +31,16 @@ class FastSalesPipeline(SalesPipeline):
         """Initialize with fast mode configuration"""
         super().__init__(config)
         self.fast_mode = True
+        
+        # Initialize email capabilities
+        try:
+            self.industry_router = IndustryRouter(enable_email=True)
+            self.email_enabled = True
+            print("✅ Email sending capabilities initialized")
+        except Exception as e:
+            self.industry_router = None
+            self.email_enabled = False
+            print(f"⚠️ Email functionality disabled: {e}")
     
     def run_fast(self, initial_state):
         """Run pipeline in fast mode - bypasses LangGraph for speed"""
@@ -204,26 +215,36 @@ class FastSalesPipeline(SalesPipeline):
             
             llm = ChatOpenAI(model="gpt-5-mini", temperature=1.0)
             
+            # Enhanced prompt with web research insights
+            web_research_context = ""
+            if hasattr(state, 'latest_news') and state.latest_news:
+                web_research_context += f"\nRecent News: {state.latest_news}"
+            if hasattr(state, 'recent_developments') and state.recent_developments:
+                web_research_context += f"\nRecent Developments: {', '.join(state.recent_developments[:2])}"
+            if hasattr(state, 'technology_updates') and state.technology_updates:
+                web_research_context += f"\nTech Updates: {', '.join(state.technology_updates[:2])}"
+            
             prompt = ChatPromptTemplate.from_template("""
             Create personalized outreach messages for {contact_name} at {company_name}:
             
             Company: {company_size} employees, {industry}
             Pain Points: {pain_points}
+            Market Position: {market_position}{web_research_context}
             
             Generate as JSON:
             {{
                 "email": {{
-                    "subject": "Brief, compelling subject line",
-                    "body": "Professional email body (2-3 paragraphs, 150 words max)"
+                    "subject": "Brief, compelling subject line referencing recent developments",
+                    "body": "Professional email body (2-3 paragraphs, 150 words max) incorporating recent news/developments"
                 }},
                 "linkedin": {{
                     "connection_message": "Brief LinkedIn connection request (under 200 chars)",
                     "follow_up_message": "Follow-up LinkedIn message after connection"
                 }},
-                "strategy": "Overall approach and timing recommendations"
+                "strategy": "Overall approach and timing recommendations based on recent developments"
             }}
             
-            Make messages personal, value-focused, and specific to their pain points.
+            Make messages personal, value-focused, and specific to their pain points and recent developments.
             """)
             
             chain = prompt | llm
@@ -232,7 +253,9 @@ class FastSalesPipeline(SalesPipeline):
                 "company_name": state.company_name,
                 "company_size": state.company_size or 250,
                 "industry": state.industry or "Technology",
-                "pain_points": ", ".join(state.pain_points[:2]) if state.pain_points else "scaling challenges"
+                "pain_points": ", ".join(state.pain_points[:2]) if state.pain_points else "scaling challenges",
+                "market_position": getattr(state, 'market_position', 'Market Participant'),
+                "web_research_context": web_research_context
             })
             
             # Parse the structured outreach response
@@ -261,11 +284,76 @@ class FastSalesPipeline(SalesPipeline):
             state.response_rate = 0.25  # Expected response rate
             state.last_contact = datetime.now()
             
+            # Actually send the email if capabilities are available
+            if self.email_enabled and self.industry_router:
+                email_sent = self._send_actual_email(state, outreach_data)
+                if email_sent:
+                    print("✅ Email sent successfully!")
+                    state.metadata["email_sent"] = True
+                    state.metadata["email_sent_time"] = datetime.now().isoformat()
+                else:
+                    print("⚠️ Email sending failed")
+                    state.metadata["email_sent"] = False
+            else:
+                print("📧 Email content generated (sending disabled)")
+                state.metadata["email_sent"] = False
+            
         except Exception as e:
             print(f"⚠️  AI outreach failed, using fallback: {str(e)[:50]}...")
             state = self._fallback_outreach(state)
+            
+            # Try to send fallback email too if enabled
+            if self.email_enabled and self.industry_router:
+                fallback_email_data = {
+                    'email': {
+                        'subject': state.metadata.get('email_subject', 'Partnership Opportunity'),
+                        'body': state.metadata.get('email_body', 'We believe there may be synergies between our companies.')
+                    },
+                    'strategy': 'Fallback outreach approach'
+                }
+                email_sent = self._send_actual_email(state, fallback_email_data)
+                state.metadata["email_sent"] = email_sent
+                if email_sent:
+                    print("✅ Fallback email sent successfully!")
         
         return state
+    
+    def _send_actual_email(self, state, outreach_data):
+        """Actually send the generated email using IndustryRouter"""
+        try:
+            # Always send to the configured email address for demo purposes
+            demo_email = "saiaaksh33333@gmail.com"
+            
+            # Prepare company data for email sending
+            company_data = {
+                'company_name': state.company_name,
+                'contact_email': demo_email,  # Use demo email instead of company email
+                'contact_name': state.contact_name,
+                'industry': state.industry,
+                'company_size': state.company_size,
+                'performance_score': getattr(state, 'lead_score', None)
+            }
+            
+            # Use the generated outreach content
+            email_content = {
+                'email_subject': outreach_data.get('email', {}).get('subject', 'Partnership Opportunity'),
+                'personalized_email': outreach_data.get('email', {}).get('body', 'We have an opportunity to discuss.'),
+                'value_proposition': outreach_data.get('strategy', 'Strategic partnership opportunity'),
+                'call_to_action': 'Schedule a brief call to discuss this opportunity'
+            }
+            
+            # Send email using IndustryRouter
+            results = self.industry_router.send_outreach_emails(
+                companies=[company_data],
+                outreach_content=email_content,
+                template_type="ai_generated_outreach"
+            )
+            
+            return results.get('success', False) and results.get('sent_count', 0) > 0
+            
+        except Exception as e:
+            print(f"❌ Email sending error: {e}")
+            return False
     
     def _fast_simulation(self, state):
         """Fast simulation using single AI call"""
@@ -443,6 +531,7 @@ Best regards"""
         print(f"   • Lead Score: {state.lead_score:.2f}/1.0")
         print(f"   • Qualification: {state.qualification_score:.2f}/1.0")
         print(f"   • Engagement: {state.engagement_level:.2f}/1.0")
+        print(f"   • Email Status: {'✅ Sent' if state.metadata.get('email_sent') else '📧 Generated Only'}")
         
         print(f"\n🔍 Research Findings:")
         if state.pain_points:

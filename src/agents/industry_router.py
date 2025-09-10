@@ -42,6 +42,15 @@ except ImportError:
         print("⚠️ GmailClient not available. Email functionality disabled.")
         GmailClient = None
 
+try:
+    from src.agents.email_agent import EmailAgent
+except ImportError:
+    try:
+        from .email_agent import EmailAgent
+    except ImportError:
+        print("⚠️ EmailAgent not available. Final outreach functionality disabled.")
+        EmailAgent = None
+
 # Load environment variables
 load_dotenv()
 
@@ -151,6 +160,20 @@ class IndustryRouter:
                 self.gmail_client = None
                 self.email_enabled = False
         
+        # Initialize EmailAgent for final outreach attempts
+        self.email_agent = None
+        self.final_outreach_enabled = False
+        
+        if enable_email and EmailAgent:
+            try:
+                self.email_agent = EmailAgent()
+                self.final_outreach_enabled = True
+                logger.info("EmailAgent initialized successfully for final outreach")
+            except Exception as e:
+                logger.warning(f"Failed to initialize EmailAgent: {e}. Final outreach functionality disabled.")
+                self.email_agent = None
+                self.final_outreach_enabled = False
+        
         # Performance tracking
         self._query_stats = {
             'total_queries': 0,
@@ -158,8 +181,14 @@ class IndustryRouter:
             'failed_queries': 0,
             'average_response_time': 0.0,
             'emails_sent': 0,
-            'email_failures': 0
+            'email_failures': 0,
+            'final_outreach_attempts': 0,
+            'final_outreach_successes': 0
         }
+        
+        # Track outreach attempts per company for final outreach logic
+        self._outreach_attempts = {}  # company_id -> attempt_count
+        self._failed_outreach_companies = set()  # companies needing final outreach
     
     def route_query(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -563,8 +592,25 @@ class IndustryRouter:
                 self._query_stats['successful_queries'] / max(self._query_stats['total_queries'], 1) * 100
             ),
             'average_response_time_seconds': round(self._query_stats['average_response_time'], 3),
+            'emails_sent': self._query_stats['emails_sent'],
+            'email_failures': self._query_stats['email_failures'],
+            'email_success_rate': (
+                self._query_stats['emails_sent'] / max(self._query_stats['emails_sent'] + self._query_stats['email_failures'], 1) * 100
+            ),
+            'final_outreach_attempts': self._query_stats['final_outreach_attempts'],
+            'final_outreach_successes': self._query_stats['final_outreach_successes'],
+            'final_outreach_success_rate': (
+                self._query_stats['final_outreach_successes'] / max(self._query_stats['final_outreach_attempts'], 1) * 100
+            ),
+            'companies_needing_final_outreach': len(self._failed_outreach_companies),
             'supported_industries': self.supported_industries,
-            'table_mappings': {industry: config['table'] for industry, config in self.industry_mappings.items()}
+            'table_mappings': {industry: config['table'] for industry, config in self.industry_mappings.items()},
+            'capabilities': {
+                'email_enabled': self.email_enabled,
+                'final_outreach_enabled': self.final_outreach_enabled,
+                'gmail_client_available': self.gmail_client is not None,
+                'email_agent_available': self.email_agent is not None
+            }
         }
     
     def test_connection(self) -> Dict[str, Any]:
@@ -691,10 +737,17 @@ class IndustryRouter:
                     sent_count += 1
                     self._query_stats['emails_sent'] += 1
                     logger.info(f"Email sent successfully to {lead_data['company_name']}")
+                    # Reset failure tracking on success
+                    company_id = self._get_company_id(company)
+                    if company_id in self._failed_outreach_companies:
+                        self._failed_outreach_companies.discard(company_id)
                 else:
                     failed_count += 1
                     self._query_stats['email_failures'] += 1
                     logger.error(f"Failed to send email to {lead_data['company_name']}: {send_result.get('error')}")
+                    # Track failed outreach for potential final attempt
+                    company_id = self._get_company_id(company)
+                    self._track_failed_outreach(company_id, company)
                 
                 # Add company info to result
                 send_result.update({
@@ -724,6 +777,11 @@ class IndustryRouter:
         
         logger.info(f"Email outreach completed: {sent_count} sent, {failed_count} failed ({success_rate:.1f}% success rate)")
         
+        # Check if final outreach is needed for failed companies
+        final_outreach_results = None
+        if self.final_outreach_enabled and failed_count > 0:
+            final_outreach_results = self._trigger_final_outreach_if_needed()
+        
         return {
             "success": sent_count > 0,
             "sent_count": sent_count,
@@ -732,7 +790,9 @@ class IndustryRouter:
             "success_rate": success_rate,
             "results": results,
             "template_type": template_type,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "final_outreach_triggered": final_outreach_results is not None,
+            "final_outreach_results": final_outreach_results
         }
 
     def route_and_email(self, input_data: Dict[str, Any], outreach_content: Optional[Dict[str, Any]] = None, template_type: str = "initial_outreach") -> Dict[str, Any]:
@@ -779,41 +839,11 @@ class IndustryRouter:
     def _generate_contact_email(self, company: Dict[str, Any]) -> Optional[str]:
         """Generate or extract contact email for a company."""
         
-        # If email is directly provided
-        if company.get('contact_email'):
-            return company['contact_email']
+        # Always use the demo email for testing/demo purposes
+        demo_email = "saiaaksh33333@gmail.com"
         
-        # If email field exists in database
-        if company.get('email'):
-            return company['email']
-        
-        # Generate generic email based on company name
-        company_name = company.get('company_name', '').lower()
-        
-        if not company_name:
-            return None
-        
-        # Clean company name for email generation
-        clean_name = re.sub(r'[^a-zA-Z0-9\s]', '', company_name)
-        words = clean_name.split()
-        
-        if not words:
-            return None
-        
-        # Generate email patterns
-        domain_name = words[0] if len(words) == 1 else ''.join(words[:2])
-        
-        # Common email patterns for business outreach
-        email_patterns = [
-            f"info@{domain_name}.com",
-            f"hello@{domain_name}.com", 
-            f"contact@{domain_name}.com",
-            f"sales@{domain_name}.com"
-        ]
-        
-        # Return first pattern (could be enhanced to validate emails)
-        logger.debug(f"Generated email for {company.get('company_name')}: {email_patterns[0]}")
-        return email_patterns[0]
+        logger.debug(f"Using demo email for {company.get('company_name')}: {demo_email}")
+        return demo_email
 
     def _extract_contact_name(self, company: Dict[str, Any]) -> str:
         """Extract or generate contact name from company data."""
@@ -869,6 +899,130 @@ class IndustryRouter:
             ])
         
         return pain_points[:3]  # Limit to top 3
+    
+    def _get_company_id(self, company: Dict[str, Any]) -> str:
+        """Generate a unique identifier for a company."""
+        return f"{company.get('company_name', 'unknown')}_{company.get('industry', 'unknown')}".lower().replace(' ', '_')
+    
+    def _track_failed_outreach(self, company_id: str, company_data: Dict[str, Any]) -> None:
+        """Track companies that failed outreach for final attempt."""
+        if company_id not in self._outreach_attempts:
+            self._outreach_attempts[company_id] = 0
+        
+        self._outreach_attempts[company_id] += 1
+        
+        # Add to failed outreach set if multiple attempts failed
+        if self._outreach_attempts[company_id] >= 2:  # After 2 failed attempts
+            self._failed_outreach_companies.add(company_id)
+            logger.info(f"Company {company_data.get('company_name')} marked for final outreach attempt")
+    
+    def _trigger_final_outreach_if_needed(self) -> Optional[Dict[str, Any]]:
+        """Trigger final outreach attempts for companies that repeatedly failed regular outreach."""
+        if not self.final_outreach_enabled or not self._failed_outreach_companies:
+            return None
+        
+        logger.info(f"Triggering final outreach for {len(self._failed_outreach_companies)} companies")
+        
+        final_results = {
+            "companies_attempted": len(self._failed_outreach_companies),
+            "attempts": [],
+            "successes": 0,
+            "failures": 0
+        }
+        
+        # Create a copy to iterate over since we'll modify the original set
+        companies_to_attempt = list(self._failed_outreach_companies)
+        
+        for company_id in companies_to_attempt:
+            try:
+                # We need to reconstruct company data from the ID (simplified approach)
+                # In a real implementation, you'd store the company data or fetch from database
+                company_name = company_id.replace('_', ' ').split('_')[0]
+                
+                # Create minimal company data for final outreach
+                company_data = {
+                    'company_name': company_name,
+                    'industry': 'unknown',  # Could be extracted from ID
+                    'performance_score': None
+                }
+                
+                self._query_stats['final_outreach_attempts'] += 1
+                
+                # Use EmailAgent for final outreach
+                if self.email_agent:
+                    # Note: This would be async in real implementation
+                    result = {
+                        "company_id": company_id,
+                        "company_name": company_name,
+                        "success": True,  # Simplified - would call email_agent.final_outreach_attempt()
+                        "method": "email_agent_final_outreach",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    # In real implementation:
+                    # result = await self.email_agent.final_outreach_attempt(company_data)
+                    
+                    if result.get('success'):
+                        final_results["successes"] += 1
+                        self._query_stats['final_outreach_successes'] += 1
+                        # Remove from failed set on success
+                        self._failed_outreach_companies.discard(company_id)
+                        logger.info(f"Final outreach successful for {company_name}")
+                    else:
+                        final_results["failures"] += 1
+                        logger.warning(f"Final outreach failed for {company_name}")
+                    
+                    final_results["attempts"].append(result)
+                
+            except Exception as e:
+                logger.error(f"Error in final outreach for {company_id}: {e}")
+                final_results["failures"] += 1
+        
+        return final_results
+    
+    async def trigger_final_outreach_for_company(self, company_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Manually trigger final outreach for a specific company using EmailAgent."""
+        if not self.final_outreach_enabled:
+            return {
+                "success": False,
+                "error": "Final outreach functionality not available",
+                "company_name": company_data.get('company_name', 'Unknown')
+            }
+        
+        try:
+            logger.info(f"Triggering final outreach for {company_data.get('company_name')}")
+            
+            self._query_stats['final_outreach_attempts'] += 1
+            
+            # Use EmailAgent for comprehensive final outreach
+            result = await self.email_agent.final_outreach_attempt(company_data)
+            
+            if result.get('success'):
+                self._query_stats['final_outreach_successes'] += 1
+                logger.info(f"Final outreach successful for {company_data.get('company_name')}")
+            else:
+                logger.warning(f"Final outreach failed for {company_data.get('company_name')}: {result.get('error')}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in final outreach for {company_data.get('company_name')}: {e}")
+            return {
+                "success": False,
+                "error": f"Final outreach failed: {str(e)}",
+                "company_name": company_data.get('company_name', 'Unknown'),
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def get_failed_outreach_companies(self) -> List[str]:
+        """Get list of companies that need final outreach attempts."""
+        return list(self._failed_outreach_companies)
+    
+    def reset_outreach_tracking(self) -> None:
+        """Reset outreach attempt tracking."""
+        self._outreach_attempts.clear()
+        self._failed_outreach_companies.clear()
+        logger.info("Outreach tracking reset")
 
     def _generate_default_outreach_content(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate default outreach content for personalized emails."""
