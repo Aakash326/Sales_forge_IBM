@@ -6,10 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
-
-client_secret_886145972382-l47dve8annirf4f73skq5quma7k203qs.apps.googleusercontent.com.json
-.env.example
-client_secret.json
+# Google API credentials and tokens
+client_secret*.json
+*_token.json
+token.json
+gmail_token.json
 # Distribution / packaging
 .Python
 build/
@@ -81,7 +82,6 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-CLAUDE_REDESIGN_PROMPT.md
 # IPython
 profile_default/
 ipython_config.py
@@ -197,7 +197,6 @@ $RECYCLE.BIN/
 # Temporary files
 *.tmp
 *.temp
-*~
 
 # API keys and environment files
 .env*
@@ -223,27 +222,20 @@ checkpoints/
 *.ckpt
 *_checkpoints.db
 
-# Add any additional sensitive or generated files to ignore
-# Sensitive files
-.env.production
-.env.local
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.npm
+.pnp
+.pnp.js
 
-# Generated files
+# React build files
+build/
+dist/
+.cache/
+
+# Generated logs
 logs/
-*.csv
-*.json
-
-# IDE-specific files
-.idea/
-.vscode/
-
-# Data files
-data/
-*.csv
-*.json
-
-# Checkpoints
-checkpoints/
-*.checkpoint
-*.ckpt
-*_checkpoints.db

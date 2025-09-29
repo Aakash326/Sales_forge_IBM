@@ -19,24 +19,13 @@ project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 sys.path.append('.')
 
-# Import all components with proper path handling
+# Import all components
 try:
-    # Try absolute imports first
-    try:
-        from src.workflow.examples.fast_workflow import FastSalesPipeline
-        from src.agents.strategic_orchestrator import StrategicOrchestrator  
-        from src.agents.hybrid_orchestrator import HybridOrchestrator
-        from src.ibm_integrations.granite_client import create_granite_client
-    except ImportError:
-        # Fallback to relative imports from project root
-        sys.path.insert(0, os.path.join(project_root, 'src'))
-        from workflow.examples.fast_workflow import FastSalesPipeline
-        from agents.strategic_orchestrator import StrategicOrchestrator  
-        from agents.hybrid_orchestrator import HybridOrchestrator
-        from ibm_integrations.granite_client import create_granite_client
-    
+    from src.workflow.examples.fast_workflow import FastSalesPipeline
+    from src.agents.strategic_orchestrator import StrategicOrchestrator  
+    from src.agents.hybrid_orchestrator import HybridOrchestrator
+    from src.ibm_integrations.granite_client import create_granite_client
     COMPONENTS_AVAILABLE = True
-    print("✅ All Fast 8-Agent components loaded successfully")
 except ImportError as e:
     print(f"⚠️ Some components not available: {e}")
     COMPONENTS_AVAILABLE = False
@@ -125,7 +114,9 @@ class Fast8AgentPlatform:
         
         # Run the fast 8-agent pipeline
         results = await self.hybrid_orchestrator.run_fast_8_agent_pipeline(
-            lead_data=lead_data
+            lead_data=lead_data,
+            include_advanced_intelligence=False,
+            optimization_mode="speed_first"
         )
         
         print(f"✅ Fast 8-Agent Pipeline completed")

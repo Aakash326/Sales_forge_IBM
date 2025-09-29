@@ -30,6 +30,9 @@ from src.ibm_integrations.strategic_agents.market_intelligence_agent import Mark
 from src.ibm_integrations.strategic_agents.technical_architecture_agent import TechnicalArchitectureAgent
 from src.ibm_integrations.strategic_agents.executive_decision_agent import ExecutiveDecisionAgent
 from src.ibm_integrations.strategic_agents.compliance_risk_agent import ComplianceRiskAgent
+from src.workflow.nodes.simulation_node import SimulationNode
+from src.workflow.nodes.advanced_simulation_node import AdvancedSimulationNode
+from src.workflow.states.lead_states import LeadState
 
 
 class IBMStrategicWorkflow:
@@ -59,6 +62,26 @@ class IBMStrategicWorkflow:
         self.technical_agent = TechnicalArchitectureAgent(self.granite_client)
         self.executive_agent = ExecutiveDecisionAgent(self.granite_client) 
         self.compliance_agent = ComplianceRiskAgent(self.granite_client)
+        
+        # Initialize enhanced AutoGen simulation for strategic scenarios
+        self.use_enhanced_simulation = config.get('use_enhanced_simulation', True)
+        if self.use_enhanced_simulation:
+            self.strategic_simulation_node = AdvancedSimulationNode(
+                model_name="gpt-4o",  # Use more powerful model for strategic scenarios
+                base_temperature=0.6,  # More conservative for strategic planning
+                seed=42,
+                use_swarm_pattern=False,  # Use MagenticOne for strategic coordination
+                enable_magentic_one=True,
+                conversation_timeout=120  # Longer timeout for strategic discussions
+            )
+        else:
+            self.strategic_simulation_node = SimulationNode(
+                model_name="gpt-4o",
+                temperature=0.6,
+                seed=42,
+                use_json_mode=True,
+                max_retries=3
+            )
         
     async def run_strategic_workflow(self, lead_data: dict, tactical_results: dict = None) -> dict:
         """
@@ -116,12 +139,23 @@ class IBMStrategicWorkflow:
         print(f"✅ Compliance analysis completed in {compliance_time:.1f}s")
         self._display_compliance_results(compliance_analysis)
         
+        # Agent 5: Strategic Simulation Agent (C-level conversation simulation)
+        print("\n🎭 Agent 5: Strategic Simulation Agent")
+        print("-" * 40)
+        simulation_start = datetime.now()
+        strategic_simulation = await self._run_strategic_simulation_agent(
+            strategic_context, market_intelligence, technical_analysis, executive_analysis, compliance_analysis
+        )
+        simulation_time = (datetime.now() - simulation_start).total_seconds()
+        print(f"✅ Strategic simulation completed in {simulation_time:.1f}s")
+        self._display_strategic_simulation_results(strategic_simulation)
+        
         # Generate strategic synthesis
         print("\n🧠 Strategic Intelligence Synthesis")
         print("-" * 40)
         synthesis_start = datetime.now()
         strategic_synthesis = await self._generate_strategic_synthesis(
-            strategic_context, market_intelligence, technical_analysis, executive_analysis, compliance_analysis
+            strategic_context, market_intelligence, technical_analysis, executive_analysis, compliance_analysis, strategic_simulation
         )
         synthesis_time = (datetime.now() - synthesis_start).total_seconds()
         print(f"✅ Strategic synthesis completed in {synthesis_time:.1f}s")
@@ -130,12 +164,13 @@ class IBMStrategicWorkflow:
         total_time = (datetime.now() - start_time).total_seconds()
         strategic_report = self._generate_strategic_report(
             strategic_context, market_intelligence, technical_analysis, 
-            executive_analysis, compliance_analysis, strategic_synthesis,
+            executive_analysis, compliance_analysis, strategic_synthesis, strategic_simulation,
             {
                 'market_time': market_time,
                 'technical_time': technical_time,
                 'executive_time': executive_time,
                 'compliance_time': compliance_time,
+                'simulation_time': simulation_time,
                 'synthesis_time': synthesis_time,
                 'total_time': total_time
             }
@@ -296,8 +331,82 @@ class IBMStrategicWorkflow:
             print(f"⚠️  Compliance Risk agent failed: {str(e)[:50]}")
             return self._fallback_compliance_analysis(context, market_intel, tech_analysis)
     
+    async def _run_strategic_simulation_agent(self, context: dict, market_intel: dict, tech_analysis: dict, 
+                                            exec_analysis: dict, compliance_analysis: dict) -> dict:
+        """
+        Strategic Simulation Agent: C-level conversation simulation using AutoGen
+        - Executive stakeholder conversation simulation
+        - Strategic decision-making scenarios
+        - Investment approval discussions
+        - Risk assessment dialogue
+        """
+        
+        try:
+            # Create strategic lead state for simulation
+            strategic_lead_state = LeadState(
+                company_name=context["company_profile"]["name"],
+                industry=context["company_profile"]["industry"],
+                company_size=context["company_profile"]["size"],
+                contact_name="C-Suite Executive",
+                # Add strategic context as pain points
+                pain_points=[
+                    "Strategic market positioning",
+                    "Investment ROI optimization", 
+                    "Competitive advantage",
+                    "Risk mitigation"
+                ],
+                # Add technical considerations
+                tech_stack=["Enterprise Architecture", "Strategic Systems", "Governance Platform"],
+                engagement_level=0.8,  # High engagement for strategic discussions
+                metadata={
+                    "market_intelligence": market_intel,
+                    "technical_analysis": tech_analysis,
+                    "executive_analysis": exec_analysis,
+                    "compliance_analysis": compliance_analysis,
+                    "strategic_context": True,
+                    "investment_amount": exec_analysis.get("total_investment", "$500,000"),
+                    "projected_roi": exec_analysis.get("projected_roi", "3.2x"),
+                    "market_opportunity": market_intel.get("total_addressable_market", "$75B")
+                }
+            )
+            
+            # Run enhanced strategic simulation
+            result_state = await self.strategic_simulation_node.execute(strategic_lead_state)
+            
+            # Extract strategic simulation insights
+            simulation_results = {
+                "strategic_conversion_probability": result_state.predicted_conversion,
+                "strategic_approach": result_state.recommended_approach,
+                "c_level_insights": result_state.metadata.get("key_insights", []),
+                "strategic_objections": result_state.metadata.get("objections_identified", []),
+                "executive_success_factors": result_state.metadata.get("success_factors", []),
+                "strategic_risks": result_state.metadata.get("risk_factors", []),
+                "simulation_type": result_state.metadata.get("simulation_type", "strategic"),
+                "conversation_quality": "executive_level"
+            }
+            
+            # Add strategic-specific metrics
+            if self.use_enhanced_simulation and "advanced_simulation_results" in result_state.metadata:
+                adv_results = result_state.metadata["advanced_simulation_results"]
+                simulation_results.update({
+                    "orchestration_type": adv_results.get("simulation_type", "magentic_one"),
+                    "strategic_agent_strategy": adv_results.get("strategy_used", {}),
+                    "executive_engagement_metrics": adv_results.get("performance_metrics", {})
+                })
+            
+            print(f"✅ Strategic simulation analysis complete")
+            print(f"   • Executive Conversion Probability: {result_state.predicted_conversion:.1%}")
+            if simulation_results.get("orchestration_type"):
+                print(f"   • Orchestration: {simulation_results['orchestration_type'].title()}")
+            
+            return simulation_results
+            
+        except Exception as e:
+            print(f"⚠️  Strategic simulation failed: {str(e)[:50]}")
+            return self._fallback_strategic_simulation(context, exec_analysis)
+    
     async def _generate_strategic_synthesis(self, context: dict, market_intel: dict, tech_analysis: dict, 
-                                          exec_analysis: dict, compliance_analysis: dict) -> dict:
+                                          exec_analysis: dict, compliance_analysis: dict, strategic_simulation: dict = None) -> dict:
         """Generate strategic synthesis combining all agent analyses"""
         
         try:
@@ -342,7 +451,9 @@ class IBMStrategicWorkflow:
                 "implementation_feasibility": 0.75,
                 "strategic_recommendation": "Proceed with phased implementation approach",
                 "synthesis_narrative": response.get("content", "Strategic synthesis generated"),
-                "confidence_level": 0.80
+                "confidence_level": 0.80,
+                "strategic_simulation_insights": strategic_simulation.get("c_level_insights", []) if strategic_simulation else [],
+                "executive_conversion_probability": strategic_simulation.get("strategic_conversion_probability", 0.75) if strategic_simulation else 0.75
             }
             
         except Exception as e:
@@ -350,8 +461,8 @@ class IBMStrategicWorkflow:
             return self._fallback_strategic_synthesis()
     
     def _generate_strategic_report(self, context: dict, market_intel: dict, tech_analysis: dict,
-                                 exec_analysis: dict, compliance_analysis: dict, synthesis: dict,
-                                 timing_metrics: dict) -> dict:
+                                 exec_analysis: dict, compliance_analysis: dict, synthesis: dict, 
+                                 strategic_simulation: dict, timing_metrics: dict) -> dict:
         """Generate comprehensive strategic intelligence report"""
         
         return {
@@ -363,6 +474,7 @@ class IBMStrategicWorkflow:
             "technical_architecture": tech_analysis,
             "executive_decision_intelligence": exec_analysis,
             "compliance_risk_assessment": compliance_analysis,
+            "strategic_simulation": strategic_simulation,
             
             # Strategic synthesis
             "strategic_synthesis": synthesis,
@@ -531,6 +643,34 @@ class IBMStrategicWorkflow:
             "confidence_level": 0.75
         }
     
+    def _fallback_strategic_simulation(self, context: dict, exec_analysis: dict) -> dict:
+        """Fallback strategic simulation without AutoGen"""
+        print("🎭 Using fallback strategic simulation")
+        
+        company_size = context["company_profile"]["size"]
+        
+        # Strategic conversion tends to be higher due to C-level engagement
+        base_conversion = 0.65
+        if company_size > 1000:
+            base_conversion += 0.15  # Large enterprises have higher strategic conversion
+        elif company_size > 500:
+            base_conversion += 0.1
+            
+        return {
+            "strategic_conversion_probability": min(base_conversion, 0.9),
+            "strategic_approach": "Executive-level strategic engagement",
+            "c_level_insights": [
+                "Strong strategic alignment with business objectives",
+                "Investment aligns with market opportunity",
+                "Executive team shows high engagement"
+            ],
+            "strategic_objections": ["Implementation timeline", "Resource allocation"],
+            "executive_success_factors": ["Clear ROI", "Strategic differentiation"],
+            "strategic_risks": ["Market timing", "Competitive response"],
+            "simulation_type": "fallback_strategic",
+            "conversation_quality": "executive_level"
+        }
+    
     def _generate_executive_summary(self, context: dict, market_intel: dict, exec_analysis: dict, synthesis: dict) -> str:
         """Generate executive summary"""
         
@@ -607,6 +747,36 @@ Recommend proceeding with phased implementation approach to capture market oppor
         print(f"   • Regulatory Complexity: {compliance_analysis.get('regulatory_complexity', 'Unknown')}")
         print(f"   • Financial Impact: {compliance_analysis.get('financial_impact', 'Unknown')}")
         print(f"   • Mitigation Timeline: {compliance_analysis.get('regulatory_timeline', 'Unknown')}")
+    
+    def _display_strategic_simulation_results(self, simulation_results: dict):
+        """Display strategic simulation results"""
+        print(f"   • Executive Conversion: {simulation_results.get('strategic_conversion_probability', 0.75):.1%}")
+        print(f"   • Simulation Type: {simulation_results.get('simulation_type', 'strategic').title()}")
+        print(f"   • Conversation Quality: {simulation_results.get('conversation_quality', 'executive_level').replace('_', ' ').title()}")
+        
+        # AutoGen-specific metrics
+        if simulation_results.get('orchestration_type'):
+            print(f"   • Orchestration: {simulation_results['orchestration_type'].title()}")
+        
+        if simulation_results.get('executive_engagement_metrics'):
+            metrics = simulation_results['executive_engagement_metrics']
+            if metrics.get('response_time'):
+                print(f"   • Response Time: {metrics['response_time']:.2f}s")
+            if metrics.get('message_count'):
+                print(f"   • Conversation Depth: {metrics['message_count']} exchanges")
+        
+        # Strategic insights
+        c_level_insights = simulation_results.get('c_level_insights', [])
+        if c_level_insights:
+            print(f"   • C-Level Insights: {len(c_level_insights)} identified")
+            for insight in c_level_insights[:2]:  # Show first 2
+                print(f"     - {insight}")
+        
+        strategic_objections = simulation_results.get('strategic_objections', [])
+        if strategic_objections:
+            print(f"   • Strategic Objections: {len(strategic_objections)} identified")
+        
+        print(f"   • Strategic Approach: {simulation_results.get('strategic_approach', 'Executive engagement')}")
     
     def _display_strategic_intelligence_dashboard(self, report: dict):
         """Display comprehensive strategic intelligence dashboard"""
@@ -726,10 +896,13 @@ async def run_single_strategic_demo():
         }
     }
     
-    print("🎯 IBM Strategic Intelligence - Single Lead Demo")
+    print("🎯 IBM Strategic Intelligence - Enhanced AutoGen Demo")
     print(f"Processing: {enterprise_prospect['company_name']}")
+    print("Features: Strategic C-Level Simulation with MagenticOne")
     
-    workflow = IBMStrategicWorkflow()
+    # Configure with enhanced AutoGen simulation
+    config = {'use_enhanced_simulation': True}
+    workflow = IBMStrategicWorkflow(config)
     result = await workflow.run_strategic_workflow(enterprise_prospect, sample_tactical_results)
     
     return result
@@ -761,10 +934,13 @@ async def run_fintech_strategic_demo():
         }
     }
     
-    print("🎯 IBM Strategic Intelligence - FinTech Demo")
+    print("🎯 IBM Strategic Intelligence - FinTech Enhanced Demo")
     print(f"Processing: {fintech_prospect['company_name']}")
+    print("Features: High-Compliance Strategic Simulation")
     
-    workflow = IBMStrategicWorkflow()
+    # Configure with enhanced simulation for FinTech
+    config = {'use_enhanced_simulation': True}
+    workflow = IBMStrategicWorkflow(config)
     result = await workflow.run_strategic_workflow(fintech_prospect, sample_tactical_results)
     
     return result

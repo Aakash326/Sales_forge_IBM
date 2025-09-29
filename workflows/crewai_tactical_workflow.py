@@ -27,6 +27,8 @@ sys.path.insert(0, project_root)
 
 from src.workflow.sales_pipeline import SalesPipeline
 from src.workflow.states.lead_states import LeadState
+from src.workflow.nodes.simulation_node import SimulationNode
+from src.workflow.nodes.advanced_simulation_node import AdvancedSimulationNode
 
 
 class CrewAITacticalWorkflow:
@@ -44,6 +46,26 @@ class CrewAITacticalWorkflow:
         self.config = config or {}
         self.execution_mode = "fast_tactical"
         self.agent_timeout = 20  # 20 seconds per agent
+        
+        # Initialize enhanced AutoGen simulation nodes
+        self.use_advanced_simulation = config.get('use_advanced_simulation', True)
+        if self.use_advanced_simulation:
+            self.simulation_node = AdvancedSimulationNode(
+                model_name="gpt-4o-mini",
+                base_temperature=0.7,
+                seed=42,
+                use_swarm_pattern=True,
+                enable_magentic_one=False,
+                conversation_timeout=30
+            )
+        else:
+            self.simulation_node = SimulationNode(
+                model_name="gpt-4o-mini",
+                temperature=0.7,
+                seed=42,
+                use_json_mode=True,
+                max_retries=2
+            )
         
     async def run_tactical_workflow(self, lead_data: dict) -> dict:
         """
@@ -498,146 +520,51 @@ class CrewAITacticalWorkflow:
     
     async def _run_simulation_agent(self, state: LeadState) -> LeadState:
         """
-        Simulation Agent: Conversion probability modeling
-        - Sales cycle duration prediction
-        - Conversion probability analysis
-        - Deal size estimation
-        - Objection handling preparation
+        Enhanced Simulation Agent using AutoGen 0.4.0+ patterns
+        - Multi-agent conversation simulation (Swarm or MagenticOne)
+        - Advanced persona-based interactions
+        - Structured output with Pydantic validation
+        - Dynamic agent selection based on company characteristics
         """
         
-        if not os.getenv('OPENAI_API_KEY'):
-            return self._fallback_simulation(state)
-        
         try:
-            from langchain_openai import ChatOpenAI
-            from langchain_core.prompts import ChatPromptTemplate
+            # Use enhanced AutoGen simulation
+            result_state = await self.simulation_node.execute(state)
             
-            llm = ChatOpenAI(model="gpt-5-mini", temperature=1.0)
-            
-            simulation_prompt = ChatPromptTemplate.from_template("""
-            You are a Simulation Agent specializing in sales outcome prediction and modeling.
-            
-            Simulate sales process for {company_name}:
-            
-            INPUT VARIABLES:
-            • Lead Score: {lead_score}
-            • Qualification Score: {qualification_score}
-            • Company Size: {company_size} employees
-            • Pain Points: {pain_points}
-            • Budget Probability: {budget_probability}
-            • Decision Urgency: {decision_urgency}
-            • Technical Readiness: {technical_readiness}
-            
-            SIMULATION OBJECTIVES:
-            1. Conversion Probability: Likelihood of closing the deal
-            2. Sales Cycle Prediction: Expected timeline to close
-            3. Deal Size Estimation: Potential contract value
-            4. Success Factors: Key drivers for winning
-            5. Risk Factors: Potential obstacles and objections
-            
-            Provide detailed simulation results as JSON:
-            {{
-                "conversion_analysis": {{
-                    "conversion_probability": 0.65,
-                    "confidence_interval": {{"low": 0.55, "high": 0.75}},
-                    "key_success_factors": ["Factor 1", "Factor 2", "Factor 3"],
-                    "primary_risk_factors": ["Risk 1", "Risk 2"]
-                }},
-                "sales_cycle_prediction": {{
-                    "estimated_duration_days": 90,
-                    "duration_range": {{"min": 60, "max": 120}},
-                    "key_milestones": [
-                        {{"milestone": "Discovery call", "days": 7}},
-                        {{"milestone": "Technical demo", "days": 21}},
-                        {{"milestone": "Proposal", "days": 45}},
-                        {{"milestone": "Decision", "days": 75}}
-                    ]
-                }},
-                "deal_value_estimation": {{
-                    "estimated_deal_size": 85000,
-                    "deal_size_range": {{"min": 65000, "max": 120000}},
-                    "pricing_confidence": 0.7,
-                    "upsell_potential": 0.3
-                }},
-                "objection_handling": {{
-                    "likely_objections": [
-                        {{"objection": "Budget concerns", "probability": 0.7, "response_strategy": "ROI focus"}},
-                        {{"objection": "Technical complexity", "probability": 0.5, "response_strategy": "Implementation support"}},
-                        {{"objection": "Timeline pressure", "probability": 0.4, "response_strategy": "Phased approach"}}
-                    ]
-                }},
-                "recommended_strategy": {{
-                    "primary_approach": "Consultative selling focused on ROI",
-                    "key_messaging": ["Message 1", "Message 2"],
-                    "demo_focus_areas": ["Feature area 1", "Feature area 2"],
-                    "stakeholder_strategy": "Multi-threaded approach with technical and business stakeholders"
-                }}
-            }}
-            
-            Base predictions on data-driven analysis and sales methodology best practices.
-            """)
-            
-            chain = simulation_prompt | llm
-            response = await asyncio.wait_for(
-                asyncio.create_task(chain.ainvoke({
-                    "company_name": state.company_name,
-                    "lead_score": state.lead_score,
-                    "qualification_score": state.qualification_score, 
-                    "company_size": state.company_size or "Unknown",
-                    "pain_points": ", ".join(state.pain_points[:3]) if state.pain_points else "None identified",
-                    "budget_probability": state.metadata.get("budget_probability", 0.5),
-                    "decision_urgency": state.metadata.get("decision_urgency", 0.5),
-                    "technical_readiness": state.metadata.get("technical_readiness", 0.5)
-                })),
-                timeout=self.agent_timeout
-            )
-            
-            # Parse simulation results
-            import json
-            try:
-                simulation_data = json.loads(response.content)
+            # Extract enhanced simulation results
+            if self.use_advanced_simulation and "advanced_simulation_results" in result_state.metadata:
+                adv_results = result_state.metadata["advanced_simulation_results"]
                 
-                # Store conversion analysis
-                conversion = simulation_data.get("conversion_analysis", {})
-                state.predicted_conversion = conversion.get("conversion_probability", 0.5)
-                state.metadata["conversion_confidence"] = conversion.get("confidence_interval", {})
-                state.metadata["success_factors"] = conversion.get("key_success_factors", [])
-                state.metadata["risk_factors"] = conversion.get("primary_risk_factors", [])
+                # Map advanced results to tactical workflow format
+                state.metadata["simulation_type"] = adv_results.get("simulation_type", "advanced")
+                state.metadata["agent_strategy"] = adv_results.get("strategy_used", {})
+                state.metadata["performance_metrics"] = adv_results.get("performance_metrics", {})
                 
-                # Store sales cycle prediction
-                sales_cycle = simulation_data.get("sales_cycle_prediction", {})
-                state.metadata["estimated_duration"] = sales_cycle.get("estimated_duration_days", 90)
-                state.metadata["duration_range"] = sales_cycle.get("duration_range", {})
-                state.metadata["sales_milestones"] = sales_cycle.get("key_milestones", [])
+                # Enhanced success/risk factors from structured analysis
+                if adv_results.get("success_factors"):
+                    state.metadata["success_factors"] = adv_results["success_factors"]
+                if adv_results.get("risk_factors"):
+                    state.metadata["risk_factors"] = adv_results["risk_factors"]
+                    
+            elif "simulation_results" in result_state.metadata:
+                # Standard simulation results
+                sim_results = result_state.metadata["simulation_results"]
+                state.metadata.update(sim_results)
+            
+            # Ensure tactical compatibility
+            if not hasattr(state, 'predicted_conversion') or state.predicted_conversion == 0:
+                state.predicted_conversion = result_state.predicted_conversion
+            if not hasattr(state, 'recommended_approach') or not state.recommended_approach:
+                state.recommended_approach = result_state.recommended_approach
                 
-                # Store deal value estimation
-                deal_value = simulation_data.get("deal_value_estimation", {})
-                state.metadata["estimated_deal_size"] = deal_value.get("estimated_deal_size", 75000)
-                state.metadata["deal_size_range"] = deal_value.get("deal_size_range", {})
-                state.metadata["pricing_confidence"] = deal_value.get("pricing_confidence", 0.6)
-                state.metadata["upsell_potential"] = deal_value.get("upsell_potential", 0.2)
-                
-                # Store objection handling
-                state.metadata["likely_objections"] = simulation_data.get("objection_handling", {}).get("likely_objections", [])
-                
-                # Store recommended strategy
-                strategy = simulation_data.get("recommended_strategy", {})
-                state.recommended_approach = strategy.get("primary_approach", "Consultative approach")
-                state.metadata["key_messaging"] = strategy.get("key_messaging", [])
-                state.metadata["demo_focus"] = strategy.get("demo_focus_areas", [])
-                state.metadata["stakeholder_strategy"] = strategy.get("stakeholder_strategy", "")
-                
-                state.simulation_completed = True
-                
-            except json.JSONDecodeError:
-                print("⚠️  JSON parsing failed, using fallback simulation")
-                state = self._fallback_simulation(state)
-                
-        except asyncio.TimeoutError:
-            print(f"⚠️  Simulation agent timeout after {self.agent_timeout}s, using fallback")
-            state = self._fallback_simulation(state)
+            state.simulation_completed = True
+            
+            print(f"✅ Enhanced AutoGen simulation completed")
+            print(f"   • Simulation Type: {state.metadata.get('simulation_type', 'standard')}")
+            print(f"   • Agent Strategy: {state.metadata.get('agent_strategy', {}).get('primary_rep_persona', 'standard')}")
+            
         except Exception as e:
-            print(f"⚠️  Simulation agent failed: {str(e)[:50]}, using fallback")
+            print(f"⚠️  Enhanced simulation failed: {str(e)[:50]}, using fallback")
             state = self._fallback_simulation(state)
             
         return state
@@ -789,13 +716,35 @@ Best regards"""
         print(f"   • Multi-channel Campaign: {'✅ Complete' if state.metadata.get('call_script') else '❌ Partial'}")
     
     def _display_simulation_results(self, state: LeadState):
-        """Display simulation agent results"""
+        """Display enhanced simulation agent results"""
         print(f"   • Conversion Probability: {state.predicted_conversion:.1%}")
+        print(f"   • Simulation Type: {state.metadata.get('simulation_type', 'standard').title()}")
+        
+        # Display AutoGen-specific metrics if available
+        if self.use_advanced_simulation and state.metadata.get('agent_strategy'):
+            strategy = state.metadata['agent_strategy']
+            print(f"   • Agent Persona: {strategy.get('primary_rep_persona', 'standard').replace('_', ' ').title()}")
+            print(f"   • Conversation Style: {strategy.get('conversation_style', 'consultative').title()}")
+            
+        # Performance metrics
+        perf_metrics = state.metadata.get('performance_metrics', {})
+        if perf_metrics.get('response_time'):
+            print(f"   • Response Time: {perf_metrics['response_time']:.2f}s")
+        if perf_metrics.get('message_count'):
+            print(f"   • Conversation Turns: {perf_metrics['message_count']}")
+            
+        # Standard metrics
         print(f"   • Estimated Deal Size: ${state.metadata.get('estimated_deal_size', 75000):,}")
         print(f"   • Expected Duration: {state.metadata.get('estimated_duration', 90)} days")
         print(f"   • Success Factors: {len(state.metadata.get('success_factors', []))} identified")
         print(f"   • Risk Factors: {len(state.metadata.get('risk_factors', []))} identified")
         print(f"   • Recommended Approach: {state.recommended_approach}")
+        
+        # Show enhanced insights if available
+        if state.metadata.get('key_insights'):
+            insights = state.metadata['key_insights'][:2]  # Show first 2 insights
+            for insight in insights:
+                print(f"   • Key Insight: {insight}")
     
     def _display_tactical_summary(self, state: LeadState, total_time: float, agent_times: dict):
         """Display comprehensive tactical intelligence summary"""
@@ -892,7 +841,7 @@ Best regards"""
 
 # Demo and testing functions
 async def run_single_tactical_demo():
-    """Run single tactical workflow demo"""
+    """Run single tactical workflow demo with enhanced AutoGen simulation"""
     
     sample_lead = {
         "lead_id": "TACTICAL_001",
@@ -904,10 +853,16 @@ async def run_single_tactical_demo():
         "location": "Austin, TX"
     }
     
-    print("🚀 CrewAI Tactical Intelligence - Single Lead Demo")
+    print("🚀 CrewAI Tactical Intelligence - Enhanced AutoGen Demo")
     print(f"Processing: {sample_lead['company_name']}")
+    print("Features: Advanced Simulation with Swarm Patterns")
     
-    workflow = CrewAITacticalWorkflow()
+    # Configure with enhanced AutoGen simulation
+    config = {
+        'use_advanced_simulation': True
+    }
+    
+    workflow = CrewAITacticalWorkflow(config)
     result = await workflow.run_tactical_workflow(sample_lead)
     
     return result
@@ -946,7 +901,9 @@ async def run_multiple_tactical_demo():
         }
     ]
     
-    workflow = CrewAITacticalWorkflow()
+    # Test both standard and advanced simulation modes
+    config = {'use_advanced_simulation': True}
+    workflow = CrewAITacticalWorkflow(config)
     results = []
     total_start = datetime.now()
     
