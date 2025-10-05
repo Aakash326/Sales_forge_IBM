@@ -35,6 +35,7 @@ except ImportError as e:
     create_granite_client = None
 
 class Intermediate11AgentPlatform:
+    
     """
     Intermediate 11-Agent Strategic Intelligence Platform
     
